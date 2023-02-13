@@ -78,7 +78,7 @@ def logpolar_to_cartesian_coords(logpolar_coordinates, gaze_position, alpha,
         (logpolar_width, logpolar_height), dtype=dtype, device=device)
     logpolar_coordinates = logpolar_coordinates / logpolar_buffer_resolution
     l_value = get_l_value(gaze_position, image_height, image_width)
-    u = torch.pow(logpolar_coordinates[..., 0], alpha)
+    u = torch.pow(logpolar_coordinates[..., 0], 1 / alpha)
     u = torch.exp(l_value * u)
     v = logpolar_coordinates[..., 1] * 2 * np.pi
     x = u * torch.cos(v) + gaze_position[0]
@@ -95,7 +95,7 @@ def cartesian_to_logpolar_coords(cartesian_coordinates, gaze_position, alpha,
     l_value = get_l_value(gaze_position, image_height, image_width)
     u = torch.log(torch.norm(logpolar_buffer_coords, dim=-1)) / l_value
     u = torch.clamp(u, min=0)  # Clamp to avoid -inf in the center
-    u = torch.pow(u, 1/alpha) * logpolar_width
+    u = torch.pow(u, alpha) * logpolar_width
     v = torch.atan2(logpolar_buffer_coords[..., 1],
                     logpolar_buffer_coords[..., 0])
     v = (v + 2 * np.pi) % (2 * np.pi)
@@ -182,3 +182,22 @@ def logpolar_to_cartesian_image(logpolar_buffer, gaze_position, sigma=1.8, alpha
         logpolar_buffer_channels_first, logpolar_buffer_coords,
         align_corners=True, padding_mode="border")
     return image.squeeze(0).permute(1, 2, 0)
+
+
+def apply_kfr_foveation(images: torch.Tensor, gaze_positions: torch.Tensor,
+                        sigma: float = 1.8, alpha: float = 4):
+    """Applies KFR foveation to a batch of images.
+
+    Args:
+        images: A tensor of shape (batch_size, height, width, channels).
+        gaze_positions: A tensor of shape (batch_size, 2) representing the gaze position as (x,y) pixel coordinates.
+    """
+    foveated_images = []
+    for image, gaze in zip(images, gaze_positions):
+        lp_buffer = cartesian_to_logpolar_buffer(
+            image, gaze, sigma=sigma, alpha=alpha)
+        foveated_image = logpolar_to_cartesian_image(
+            lp_buffer, gaze, image_height=image.shape[0], image_width=image.shape[1],
+            sigma=sigma, alpha=alpha)
+        foveated_images.append(foveated_image)
+    return torch.stack(foveated_images, dim=0)
